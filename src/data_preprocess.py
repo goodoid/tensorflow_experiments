@@ -1,8 +1,10 @@
 import sys
 import os
 import tensorflow as tf
+import numpy
 input_data_path="./data/16-rawdata-max/huajiaoyou-ascii/2016_03_25/merged/"
 cat_to_int={'H':[0,0,1],'Q':[0,1,0],'T':[1,0,0]}
+#cat_to_int={'H':1,'Q':2,'T':3}
 #train_data_file={'H':''}
 
 output_path="./output/"
@@ -10,12 +12,12 @@ save_file = output_path+'/bincounter.ckpt'
 sess = tf.InteractiveSession()
 def normalize(data_path):
     files = os.listdir(data_path)
-    print len(files),files
+    #print len(files),files
     data_set = dict()
     for f in files:
         simple_cat = f.split('-')[0]
         tmp_f = open(input_data_path + f)
-        print "parse file",tmp_f
+        #print "parse file",tmp_f
         line = tmp_f.readline().strip()
         while line != "[SENSOR DATA]":
             line = tmp_f.readline().strip()
@@ -36,10 +38,11 @@ def normalize(data_path):
                 tmp_f.close()
                 break;
         data_set[simple_cat].append(one_simple)
-        print "data_set_len:%d simple_cat:%s count:%d"%(len(data_set),simple_cat,len(data_set[simple_cat]))
+        #print "data_set_len:%d simple_cat:%s count:%d"%(len(data_set),simple_cat,len(data_set[simple_cat]))
     cat_list = []
     train_x = []
     train_y = []
+    max_list = [None]*18
     for simple_cat,values in data_set.items():
         cat = simple_cat[0]
         if not cat_to_int.has_key(cat):
@@ -47,13 +50,26 @@ def normalize(data_path):
             sys.exit(1)
         if cat not in cat_list:
             cat_list.append(cat)
+            print type(values[0]["data"])
+            tmp_data = numpy.matrix(values[0]["data"],dtype=float) #NOTE:max must be numeric type
+            max_colume_value = tmp_data.max(0)[:,1:]
+            print "max",max_colume_value
+            #new_s = tmp_data[:,1:]/max_colume_value[:,numpy.newaxis]
+            #for s in new_s:
             for s in values[0]["data"]:
-                train_x.append(s[1:])
+                #print s[1:]
+                tmp_s = numpy.matrix(s[1:],dtype=float)
+                #print tmp_s
+                print "simple",cat,len(tmp_s),len(tmp_s[0,:])
+                #new_s = tmp_s/max_colume_value[:,numpy.newaxis]
+                new_s = tmp_s/max_colume_value
+                #print new_s.tolist()[0]
+                #print type(new_s[0])
+                #sys.exit()
+                train_x.append(new_s.tolist()[0])
                 train_y.append(cat_to_int[cat])
     print len(train_x),len(train_x[0])#,train_x
-    print len(train_y),len(train_y[0])#,train_y
-    #train_x  = [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1],
-    #              [1, 1, 0], [1, 1, 1]]
+    print len(train_y)#,train_y #train_x  = [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1], #              [1, 1, 0], [1, 1, 1]]
     #train_y = [[0, 0, 1], [0, 1, 0], [0, 1, 1], [1, 0, 0], [1, 0, 1], [1, 1, 0],
     #              [1, 1, 1], [0, 0, 0]]
     #test_x  = [[0, 1, 0], [0, 1, 1], [0, 0, 1], [1, 1, 1], [1, 0, 1],
@@ -82,16 +98,17 @@ def train(data,neuron_struct):
     output_layer_num = neuron_struct[-1]["struct"][1]
     x = tf.placeholder(tf.float32, shape=[None, input_layer_num])
     y_ = tf.placeholder(tf.float32, shape=[None,output_layer_num])
+    results = tf.placeholder(tf.float32, shape=[None,output_layer_num])
     for one_layer in neuron_struct:
         lname = one_layer["name"]
         lstruct = one_layer["struct"]
         with tf.name_scope(lname):
             pre_layer_num,cur_layer_num=lstruct[0],lstruct[1]
             y_caculator = lstruct[2]
-            print lname,pre_layer_num,cur_layer_num
-            tmp_w = tf.truncated_normal([pre_layer_num,cur_layer_num],mean=0.5,stddev=0.707)
+            #print lname,pre_layer_num,cur_layer_num
+            tmp_w = tf.truncated_normal([pre_layer_num,cur_layer_num],mean=0.5,stddev=0.8)
             w.append(tf.Variable(tmp_w))
-            tmp_b = tf.truncated_normal([cur_layer_num],mean=0.5,stddev=0.707)
+            tmp_b = tf.truncated_normal([cur_layer_num],mean=0.5,stddev=0.8)
             b.append(tf.Variable(tmp_b))
             if len(w) == len(neuron_struct):
                 results = tf.matmul(h[-1],w[-1])+b[-1]
@@ -100,32 +117,36 @@ def train(data,neuron_struct):
                 h.append(eval(y_caculator)(tmp_y))
             else:
                 tmp_y = tf.matmul(h[-1],w[-1])+b[-1]
-                print "h",h[-1]
                 h.append(eval(y_caculator)(tmp_y))
     with tf.name_scope("cross_entropy"):
         cross_entropy = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=results, labels=y_))
+        #cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=results, labels=y_))
     
     with tf.name_scope('train'):
         train_step = tf.train.RMSPropOptimizer(0.25, momentum=0.5).minimize(cross_entropy)
-    
-    sess.run(tf.global_variables_initializer())
+    with tf.name_scope('optimizer'):
+        optimizer = tf.train.GradientDescentOptimizer(0.1)
+        train_ops = optimizer.minimize(cross_entropy)
+    #sess.run(tf.global_variables_initializer())
+    #sess.run(tf.global_variables_initializer())
+    sess.run(tf.initialize_all_variables())
     is_converge = False
     for i in range(10001):
-      if i%100 == 0:
+      if i%1000 == 0:
         train_error = cross_entropy.eval(feed_dict={x: train_x, y_:train_y})
         print("step %d, training error  %g"%(i, train_error))
-        if train_error < 0.0005:
+        if abs(train_error) < 0.0005:
             is_converge = True
             break
       
-      sess.run(train_step, feed_dict={x: train_x, y_: train_y})
+      sess.run(train_ops, feed_dict={x: train_x, y_: train_y})
     print("Saving neural network to %s.*"%(save_file))
     if is_converge:
         saver = tf.train.Saver()
         saver.save(sess, save_file)
     else:
         print "do not save with no converge"
-    return results
+    return is_converge
 def test(results):
     saver = tf.train.Saver()
     saver.restore(sess, save_file)
@@ -138,16 +159,30 @@ def test(results):
 if __name__ == "__main__":
     neuron_struct=list([
        {
-           "name":"layer0",
-           "struct":[18,8,"tf.nn.relu"],
-       },
-       {
            "name":"layer1",
-           "struct":[8,5,"tf.nn.relu"],
+           #"struct":[18,8,"tf.nn.sigmod"],
+           "struct":[18,20,"tf.nn.relu"],
        },
        {
            "name":"layer2",
-           "struct":[5,3,"tf.sigmoid"],
+           "struct":[20,18,"tf.nn.sigmoid"],
+       },
+       {
+           "name":"layer3",
+           "struct":[18,15,"tf.nn.relu"],
+       },
+       {
+           "name":"layer3",
+           "struct":[15,10,"tf.nn.relu"],
+       },
+
+       {
+           "name":"layer4",
+           "struct":[10,5,"tf.nn.sigmoid"],
+       },
+       {
+           "name":"layer5",
+           "struct":[5,3,"tf.nn.softmax"],
        },
    ])
  
@@ -155,4 +190,9 @@ if __name__ == "__main__":
     #if os.path.isfile(save_file+".meta"):
     #    test(test_data)
     #else:
-    train(train_data,neuron_struct)
+    is_converge = False
+    run_time = 1
+    while not is_converge:
+        is_converge = train(train_data,neuron_struct)
+        run_time+=1
+        print "run_time",run_time
